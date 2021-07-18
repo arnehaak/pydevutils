@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+
+
+# Some options to make the execution of this script safer
+set -o errexit
+set -o errtrace
+set -o nounset
+set -o noclobber
+# set -o xtrace
+
+
+# USES MAMBA, WHICH IS A SUPERIOR SUBSTITUTE FOR CONDA:
+#   https://github.com/mamba-org/mamba
+
+# IS EXPECTED TO BE RUN FROM THE "base" CONDA ENVIRONMENT
+
+
+# STDERR output printing function (nothing should be printed to STDOUT,
+# except the pure name of the Conda environment)
+echoerr() { printf "%s\n" "$*" >&2; }
+
+
+# This script does not require any parameters
+if [ $# -ne 0 ]; then
+  echoerr "Unexpected number of arguments!"
+  exit 1
+fi
+
+
+if [[ "${CONDA_PREFIX:+isset}" != "isset" ]]; then
+  echoerr "ERROR: Not running in a Conda environment (variable CONDA_PREFIX unset)!"
+  exit 1
+fi
+
+
+if [[ "${CONDA_DEFAULT_ENV:+isset}" != "isset" ]]; then
+  echoerr "ERROR: Not running in a Conda environment (variable CONDA_DEFAULT_ENV unset)!"
+  exit 1
+fi
+
+
+if [ "$CONDA_DEFAULT_ENV" != "base" ]; then
+  echoerr "ERROR: This script is supposed to be run in the \"base\" environment, but it is currently running in \"$CONDA_DEFAULT_ENV\",  instead!"
+  exit 1
+fi
+
+
+if ! command -v conda &> /dev/null; then
+  echoerr "ERROR: The \"conda\" command is not available!"
+  exit 1
+fi
+
+
+if ! command -v mamba &> /dev/null; then
+  echoerr "ERROR: The \"mamba\" command is not available, please install it!"
+  exit 1
+fi
+
+
+if [[ "${PY_PROJ_WORKSPACE_ROOT:+isset}" != "isset" ]]; then
+  echoerr "ERROR: Variable PY_PROJ_WORKSPACE_ROOT is unset!"
+  exit 1
+fi
+
+
+# Convert Windows-style path to Unix-style path if needed
+case "$(uname --kernel-name)" in
+
+   Linux)
+     PY_WORKSPACE_DIR="$PY_PROJ_WORKSPACE_ROOT"
+     PY_CONDAENV_ROOT="$CONDA_PREFIX/envs"
+     ;;
+     
+   CYGWIN*|MINGW32*|MSYS*|MINGW*)
+     PY_WORKSPACE_DIR="$(cygpath --unix $PY_PROJ_WORKSPACE_ROOT)"
+     PY_CONDAENV_ROOT="$(cygpath --unix $CONDA_PREFIX)/envs"
+     ;;
+     
+   *)
+     echoerr "Error: Unsupported OS"
+     exit 1
+     ;;
+     
+esac
+
+
+# Ensure that this script is run from a directory which is an immediate
+# subdirectory of the Python workspace directory
+ACTUAL_PARENT_DIR="$(dirname $PWD)"
+
+if [ "$(readlink -f $ACTUAL_PARENT_DIR)" != "$(readlink -f $PY_WORKSPACE_DIR)" ]; then
+  echoerr "ERROR: Not in a workspace subdirectory! This script is supposed to be run from a subdirectory of \"$PY_WORKSPACE_DIR\"!"
+  exit 1
+fi
+
+
+if [ ! -f "./requirements.txt" ]; then
+  echoerr "ERROR: File \"requirements.txt\" does not exist!"
+  exit 1
+fi
+
+
+PY_CONDAENV_NAME="env_$(basename $PWD)"
+PY_CONDAENV_DIR="$PY_CONDAENV_ROOT/$PY_CONDAENV_NAME"
+
+
+if [ ! -d "$PY_CONDAENV_DIR" ]; then
+  echoerr "Creating environment \"$PY_CONDAENV_NAME\"..."
+  mamba create --name $PY_CONDAENV_NAME --file ./requirements.txt >&2
+fi
+
+
+if [ ! -d "$PY_CONDAENV_DIR" ]; then
+  echoerr "ERROR: The environment \"$PY_CONDAENV_NAME\" should exist at this point, but for some reason it doesn't!"
+  exit 1
+fi
+
+
+# We cannot just do "conda activate $PY_CONDAENV_NAME" here.
+# Instead, output the environment name and do the activation from the outside,
+# i.e., from the calling shell.
+echoerr "# Ready to enter environment \"$PY_CONDAENV_NAME\"..."
+echoerr "# To leave it later, run: \"conda deactivate\""
+echo "$PY_CONDAENV_NAME"
+
+# To use this conveniently from the outside, ensure that this Bash script
+# is in the PATH and create one of the following aliases, depending on your
+# operating system:
+#
+#  Linux (Bash):
+#    alias pyletsgo='conda activate $(bash get_conda_env_lazy_init)' 
+#
+#  Windows (interactive input in a cmd.exe shell):
+#    doskey pyletsgo=for /F "usebackq delims=" %A in (`bash get_conda_env_lazy_init`) do @conda activate %A
+#
+#  Windows (in a batch script):
+#    doskey pyletsgo=for /F "usebackq delims=" %%A in (`bash get_conda_env_lazy_init`) do @conda activate %%A
+#
+# Afterwards, all that needs to be done is to run "pyletsgo" in a workspace
+# project directory.
+# This will create the Conda environment (if needed) and enter it.
+# The environment can be left using the command "conda deactivate".
+
